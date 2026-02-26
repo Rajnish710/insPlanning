@@ -1,2 +1,6 @@
 \package\TCPDF-main\
 # Ignore all files in the TCPDF-main directory
+
+dbcon.php
+\includes\dbcon.php
+\includes\dbcon45.phpq

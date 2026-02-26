@@ -262,21 +262,147 @@ EXEC sp_executesql @sql;
         throw new Exception("No final result set returned.");
     }
 
-    $headers = [];
-    foreach ($fieldMeta as $f) {
-        $headers[] = $f['Name'];
+// -------------------- BASE HEADERS (from SQL) --------------------
+$baseHeaders = [];
+foreach ($fieldMeta as $f) {
+    $baseHeaders[] = $f['Name'];
+}
+$colPlan = [];  
+$headers = [];
+
+foreach ($baseHeaders as $h) {
+    $isMtr = (bool)preg_match('/_mtr$/i', $h);
+    $prefix = $isMtr ? substr($h, 0, -4) : null;
+
+    $colPlan[] = [
+        'name'   => $h,
+        'isMtr'  => $isMtr,
+        'prefix' => $prefix
+    ];
+
+    // keep original header
+    $headers[] = $h;
+
+    // add 4 columns after each *_mtr
+    if ($isMtr) {
+        $headers[] = $prefix . '_Drawing';
+        $headers[] = $prefix . '_Tinning';
+        $headers[] = $prefix . '_Bunching';
+        $headers[] = $prefix . '_Mica';
+    }
+}
+
+// -------------------- CAPACITY MAP FETCH --------------------
+$sqlCap = "SELECT * FROM dbo.StrDiaProcessCapacity";
+$stmtCap = sqlsrv_query($con, $sqlCap);
+if ($stmtCap === false) {
+    throw new Exception("Capacity SQL failed: " . print_r(sqlsrv_errors(), true));
+}
+
+$capacityMap = []; 
+while ($rowCap = sqlsrv_fetch_array($stmtCap, SQLSRV_FETCH_ASSOC)) {
+    $raw = trim((string)$rowCap['StrDia']);
+    $f = is_numeric($raw) ? (float)$raw : 0.0;
+
+    $k4 = number_format($f, 4, '.', '');            // e.g. "0.3000"
+    $kTrim = rtrim(rtrim($k4, '0'), '.');           // e.g. "0.3"
+
+    $capacityMap[$raw] = $rowCap;
+    $capacityMap[$k4] = $rowCap;
+    $capacityMap[$kTrim] = $rowCap;
+}
+sqlsrv_free_stmt($stmtCap);
+
+// -------------------- SETTINGS --------------------
+$noOfShift   = 2;
+$perShiftHrs = 8;
+$weekDays    = 7;
+
+$mcCount = ['drawing'=>8, 'bunching'=>9, 'tinning'=>4, 'mica'=>11];
+
+// -------------------- BUILD ROWS (with extra columns) --------------------
+$rows = [];
+
+while ($row = sqlsrv_fetch_array($finalStmt, SQLSRV_FETCH_ASSOC)) {
+
+    // row-level fields for rules
+    $noOfStr = isset($row['NoOfStr']) ? (int)$row['NoOfStr'] : 0;
+
+    $strDiaRaw = $row['StrDia'] ?? 0;
+    $strDiaF = is_numeric($strDiaRaw) ? (float)$strDiaRaw : (float)str_replace(',', '', (string)$strDiaRaw);
+
+    $strDiaKey = number_format($strDiaF, 4, '.', '');
+    $strDiaKeyTrim = rtrim(rtrim($strDiaKey, '0'), '.');
+
+    $capRow = $capacityMap[$strDiaKey]
+        ?? $capacityMap[$strDiaKeyTrim]
+        ?? $capacityMap[trim((string)$strDiaRaw)]
+        ?? null;
+
+    $drawMtrHr  = $capRow ? (float)($capRow['DrawingMtrPerHr']  ?? 0) : 0.0;
+    $bunchMtrHr = $capRow ? (float)($capRow['BunchingMtrPerHr'] ?? 0) : 0.0;
+    $tinMtrHr   = $capRow ? (float)($capRow['TinningMtrPerHr']  ?? 0) : 0.0;
+    $micaMtrHr  = $capRow ? (float)($capRow['MicaMtrPerHr']     ?? 0) : 0.0;
+
+    $condType = strtoupper(trim((string)($row['CondTypeTag'] ?? '')));
+    $isMica   = isset($row['isMica']) ? (int)$row['isMica'] : 0;
+
+    $out = [];
+
+    foreach ($colPlan as $c) {
+
+        $h = $c['name'];
+        $val = $row[$h] ?? "";
+        if ($val === null) $val = "";
+
+        // keep original value
+        $out[] = $val;
+
+        // if this is a *_mtr column, add 4 computed columns
+        if ($c['isMtr']) {
+
+            $qty = is_numeric($val) ? (float)$val : 0.0;
+
+            // ---------------- Drawing (weekly capacity includes NoOfStr) ----------------
+            $drawingWeekCap = $drawMtrHr * $mcCount['drawing'] * $noOfShift * $perShiftHrs * $weekDays;
+            $drawingLoad = ($drawingWeekCap > 0) ? (($noOfStr * $qty )/ $drawingWeekCap) : 0;
+
+            // ---------------- Tinning (only if CondTypeTag == 'TIN') ----------------
+            if ($condType !== 'TIN') {
+                $tinningLoad = 0;
+            } else {
+                $tinningWeekCap = $tinMtrHr * $mcCount['tinning'] * $noOfShift * $perShiftHrs * $weekDays;
+                $tinningLoad = ($tinningWeekCap > 0) ? (($noOfStr * $qty ) / $tinningWeekCap) : 0;
+            }
+
+            // ---------------- Bunching (special rules) ----------------
+            // Rule 1: NoOfStr==1 AND StrDia<0.31 => 0
+            // Rule 2: Bunching capacity formula me NoOfStr multiply nahi hoga
+            if ($noOfStr === 1 && $strDiaF < 0.31) {
+                $bunchingLoad = 0;
+            } else {
+                $bunchingWeekCap = $bunchMtrHr * $mcCount['bunching'] * $noOfShift * $perShiftHrs * $weekDays;
+                $bunchingLoad = ($bunchingWeekCap > 0) ? ($qty / $bunchingWeekCap) : 0;
+            }
+
+            // ---------------- Mica (only if isMica == 1) ----------------
+            if ($isMica !== 1) {
+                $micaLoad = 0;
+            } else {
+                $micaWeekCap = $micaMtrHr * $mcCount['mica'] * $noOfShift * $perShiftHrs * $noOfStr * $weekDays;
+                $micaLoad = ($micaWeekCap > 0) ? ($qty / $micaWeekCap) : 0;
+            }
+
+            // Add in requested order: Drawing, Tinning, Bunching, Mica
+            $out[] = round($drawingLoad, 6);
+            $out[] = round($tinningLoad, 6);
+            $out[] = round($bunchingLoad, 6);
+            $out[] = round($micaLoad, 6);
+        }
     }
 
-    $rows = [];
-    while ($row = sqlsrv_fetch_array($finalStmt, SQLSRV_FETCH_ASSOC)) {
-        $out = [];
-        foreach ($headers as $h) {
-            $val = $row[$h];
-            if ($val === null) $val = "";
-            $out[] = $val;
-        }
-        $rows[] = $out;
-    }
+    $rows[] = $out;
+}
 
     sqlsrv_free_stmt($stmt);
     sqlsrv_close($con);
