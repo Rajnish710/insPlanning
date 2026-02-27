@@ -117,7 +117,7 @@ include '../includes/dbcon45.php';
   <div id="sheet"></div>
 
 <script>
-
+$('#copperPlan').addClass('active');
   let spreadsheet = null;
 
   // Header ko 2-line title me convert karega:

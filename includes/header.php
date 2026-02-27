@@ -67,7 +67,7 @@
                         <span class="nav_name">Conductor <i class='bx bxs-chevron-down' style="font-size: 1rem;"></i></span>
                     </a>
                     <div class="drop2 mb-2 ms-3">
-                        <a class="nav_link mb-0" href="../Conductor/copperPlan.php" id="copperPlan"><span class="nav_name">1. &nbsp;&nbsp;Copper Plan</span></a>
+                        <a class="nav_link mb-0" href="../Conductor/copperPlanning.php" id="copperPlan"><span class="nav_name">1. &nbsp;&nbsp;Copper Plan</span></a>
                     </div>
 
 
