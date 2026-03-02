@@ -318,7 +318,7 @@ $noOfShift   = 2;
 $perShiftHrs = 8;
 $weekDays    = 7;
 
-$mcCount = ['drawing'=>8, 'bunching'=>9, 'tinning'=>4, 'mica'=>11];
+$mcCount = ['drawing'=>9, 'bunching'=>9, 'tinning'=>4, 'mica'=>11];
 
 // -------------------- BUILD ROWS (with extra columns) --------------------
 $rows = [];

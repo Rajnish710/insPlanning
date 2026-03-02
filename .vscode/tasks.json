@@ -12,6 +12,54 @@
 				"isDefault": "true"
 			},
 			"detail": "Builds the SQL project"
+		},
+		{
+			"label": "sqlproj: Build sql",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"//192.168.0.245/c$/xampp/htdocs/InsPlanning/sql/sql.sqlproj"
+			],
+			"problemMatcher": "$sqlproj-problem-matcher",
+			"isBackground": true,
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "Builds the sql SQL project"
+		},
+		{
+			"label": "sqlproj: Build condPlan",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"//192.168.0.245/c$/xampp/htdocs/InsPlanning/Conductor/condPlan/condPlan.sqlproj"
+			],
+			"problemMatcher": "$sqlproj-problem-matcher",
+			"isBackground": true,
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "Builds the condPlan SQL project"
+		},
+		{
+			"label": "sqlproj: Build DatabaseProjectPlanningSys",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"//192.168.0.245/c$/xampp/htdocs/InsPlanning/DatabaseProjectPlanningSys/DatabaseProjectPlanningSys.sqlproj"
+			],
+			"problemMatcher": "$sqlproj-problem-matcher",
+			"isBackground": true,
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "Builds the DatabaseProjectPlanningSys SQL project"
 		}
 	]
 }
