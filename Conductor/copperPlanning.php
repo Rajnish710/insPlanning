@@ -17,9 +17,9 @@ include '../includes/dbcon45.php';
         white-space: pre-line;
         background-color: #bb76df !important;
     }
-    #spreadsheet tr:nth-child(even) td{
+    /* #sheet tr:nth-child(even) td{
             background-color: #edf3ff;
-        }
+        } */
     td{
     	font-size: 13px !important;
     }
@@ -99,6 +99,152 @@ include '../includes/dbcon45.php';
     color: #333 !important; 
     font-family: monospace !important;
 }
+
+/* Modal Styling */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-content {
+  background-color: #fefefe;
+  margin: 5% auto;
+  padding: 0;
+  border: 1px solid #888;
+  width: 90%;
+  max-width: 1000px;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  padding: 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 8px 8px 0 0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.close-btn {
+  color: white;
+  font-size: 28px;
+  font-weight: bold;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  transition: transform 0.2s;
+}
+
+.close-btn:hover {
+  transform: scale(1.2);
+}
+
+.modal-body {
+  padding: 0 20px 20px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 0;
+}
+
+.modal-table thead {
+  /* background-color: #e8e8e8; */
+  position: sticky;
+  top: 0;
+}
+
+.modal-table thead th {
+  padding: 10px;
+  text-align: left;
+  border: 1px solid #ddd;
+  font-weight: 600;
+  background-color: #bb76df;
+  color: white;
+}
+
+.modal-table tbody td {
+  padding: 10px;
+  border: 1px solid #ddd;
+}
+
+.modal-table tbody tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.modal-table tbody tr:hover {
+  background-color: #f0f0f0;
+}
+
+.modal-footer {
+  padding: 15px 20px;
+  background-color: #f5f5f5;
+  text-align: right;
+  border-top: 1px solid #ddd;
+  border-radius: 0 0 8px 8px;
+}
+
+.modal-footer button {
+  padding: 8px 16px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.modal-footer button:hover {
+  background-color: #0056b3;
+}
+
+.loading-spinner {
+  text-align: center;
+  padding: 30px;
+}
+
+.spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #bb76df;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
    </style> 
 </head>
 <body>
@@ -116,6 +262,26 @@ include '../includes/dbcon45.php';
 
   <div id="sheet"></div>
 
+  <!-- Modal for Job-Wise Data -->
+  <div id="jobModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">Job-Wise Planning Details</h2>
+        <button class="close-btn" onclick="closeJobModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="jobModalBody">
+        <div class="loading-spinner">
+          <div class="spinner"></div>
+          <p>Loading...</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button onclick="closeJobModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+ <script src="script.js"></script> 
 <script>
 $('#copperPlan').addClass('active');
   let spreadsheet = null;
