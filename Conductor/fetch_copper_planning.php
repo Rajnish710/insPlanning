@@ -9,7 +9,7 @@ try {
 
     // Optional filter from query string
     // Example: api_balance_report.php?from=2026-03-01
-    $fromDate = isset($_GET['from']) ? $_GET['from'] : '2026-03-01';
+    $fromDate = isset($_GET['from']) ? $_GET['from'] : '2026-03-15';
     // Basic validation (YYYY-MM-DD)
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fromDate)) {
         $fromDate = '2026-03-01';
@@ -283,8 +283,9 @@ foreach ($baseHeaders as $h) {
     // keep original header
     $headers[] = $h;
 
-    // add 4 columns after each *_mtr
+    // add columns after each *_mtr
     if ($isMtr) {
+        $headers[] = $prefix . '_Kgs';
         $headers[] = $prefix . '_Drawing';
         $headers[] = $prefix . '_Tinning';
         $headers[] = $prefix . '_Bunching';
@@ -293,7 +294,7 @@ foreach ($baseHeaders as $h) {
 }
 
 // -------------------- CAPACITY MAP FETCH --------------------
-$sqlCap = "SELECT * FROM dbo.StrDiaProcessCapacity";
+$sqlCap = "SELECT * FROM master.StrDiaProcessCapacity";
 $stmtCap = sqlsrv_query($con, $sqlCap);
 if ($stmtCap === false) {
     throw new Exception("Capacity SQL failed: " . print_r(sqlsrv_errors(), true));
@@ -392,12 +393,16 @@ while ($row = sqlsrv_fetch_array($finalStmt, SQLSRV_FETCH_ASSOC)) {
                 $micaWeekCap = $micaMtrHr * $mcCount['mica'] * $noOfShift * $perShiftHrs * $noOfStr * $weekDays;
                 $micaLoad = ($micaWeekCap > 0) ? ($qty / $micaWeekCap) : 0;
             }
-
+            // Weight calculation: StrDia*StrDia*0.785*NoOfStr*Mtr*0.0089
+            $weight = $strDiaF * $strDiaF * 0.785 * $noOfStr * $qty * 0.0089;
+            // $weightFormatted = number_format((int)round($weight), 0, '', ',');
+            $out[] = $weight;
             // Add in requested order: Drawing, Tinning, Bunching, Mica
             $out[] = round($drawingLoad, 6);
             $out[] = round($tinningLoad, 6);
             $out[] = round($bunchingLoad, 6);
             $out[] = round($micaLoad, 6);
+
         }
     }
 

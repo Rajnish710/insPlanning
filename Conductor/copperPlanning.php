@@ -105,7 +105,7 @@ include '../includes/dbcon45.php';
 <div id="toolbar">
   <div class="toolbar-left">
     <label for="fromDate">From Date</label>
-    <input type="date" id="fromDate" value="2026-03-01" />
+    <input type="date" id="fromDate" value="2026-03-15" />
     <button onclick="loadReport()">Load</button>
   </div>
 
@@ -162,8 +162,11 @@ $('#copperPlan').addClass('active');
       if (/_mtr$/i.test(h)) {
         return { title, type: 'numeric', width: '90px', mask: '#,##0' };
       }
+      if (/_Kgs$/i.test(h)) {
+        return { title, type: 'numeric', width: '75px', mask: '#,##0' };
+      }
       if (/_(Drawing|Tinning|Bunching|Mica)$/i.test(h)) {
-        return { title, type: 'numeric', width: '90px', readOnly: true, filter: false };
+        return { title, type: 'numeric', width: '80px', readOnly: true, filter: false };
       }
       // default
       return { title, type: 'text', width: '120px' };
