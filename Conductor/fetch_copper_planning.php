@@ -14,6 +14,22 @@ try {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fromDate)) {
         $fromDate = '2026-03-01';
     }
+    // Drawing: key = strDia
+        // $drawingProdMap = [];
+        // $sqlDrawing = "
+        //     SELECT strDia, SUM(Length) AS Mtr
+        //     FROM prod.Drawing
+        //     GROUP BY strDia
+        // ";
+        // $stmtDrawing = sqlsrv_query($con, $sqlDrawing);
+        // if ($stmtDrawing === false) {
+        //     throw new Exception("Drawing prod SQL failed: " . print_r(sqlsrv_errors(), true));
+        // }
+        // while ($r = sqlsrv_fetch_array($stmtDrawing, SQLSRV_FETCH_ASSOC)) {
+        //     $k= trim((string)$r['strDia']);
+        //     $drawingProdMap[$k] = (float)($r['Mtr'] ?? 0);
+        // }
+        // sqlsrv_free_stmt($stmtDrawing);
 
     // --------- SQL BATCH (your optimized script) ----------
     // NOTE: Using $fromDate safely via parameterized query.
@@ -143,35 +159,6 @@ job_plan AS
         isMica,CondTypeTag,
         JobNo
 ),
-
-/*========================================================
-  STEP 5: Production Aggregate
-========================================================*/
-prod AS
-(
-    SELECT JobNo, SUM(ProdMtr) ProdMtr
-    FROM dbo.JobProduction
-    GROUP BY JobNo
-),
-
-/*========================================================
-  STEP 6: Balance Calculation
-========================================================*/
-job_balance AS
-(
-    SELECT
-        j.Yr,j.Mon,j.WeekNo,
-        j.NoOfStrNum,j.StrDiaNum,
-        j.isMica,j.CondTypeTag,
-        BalanceMtr =
-            CASE
-                WHEN j.JobTotalMtr - ISNULL(p.ProdMtr,0) < 0 THEN 0
-                ELSE j.JobTotalMtr - ISNULL(p.ProdMtr,0)
-            END
-    FROM job_plan j
-    LEFT JOIN prod p ON p.JobNo=j.JobNo
-),
-
 /*========================================================
   STEP 7: Week-Level Aggregate
 ========================================================*/
@@ -181,9 +168,9 @@ week_balance AS
         Yr,Mon,WeekNo,
         NoOfStrNum,StrDiaNum,
         isMica,CondTypeTag,
-        BalanceMtr = SUM(BalanceMtr)
-    FROM job_balance
-    WHERE BalanceMtr > 0
+        JobTotalMtr = SUM(JobTotalMtr)
+    FROM job_plan
+    WHERE JobTotalMtr > 0
     GROUP BY
         Yr,Mon,WeekNo,
         NoOfStrNum,StrDiaNum,
@@ -201,13 +188,13 @@ SELECT
         + '_W' + CAST(WeekNo AS VARCHAR(2)),
     SortKey = (Yr*100+Mon)*10+WeekNo,
     NoOfStrNum,StrDiaNum,isMica,CondTypeTag,
-    BalanceMtr
+    JobTotalMtr
 INTO #week_dim_jobs
 FROM week_balance;
 
 CREATE INDEX IX_temp
 ON #week_dim_jobs(NoOfStrNum,StrDiaNum,isMica,CondTypeTag,SortKey)
-INCLUDE (BalanceMtr,PeriodKey);
+INCLUDE (JobTotalMtr,PeriodKey);
 
 /*========================================================
   STEP 9: Dynamic Horizontal Pivot (Balance Only)
@@ -217,7 +204,7 @@ DECLARE @cols NVARCHAR(MAX), @sql NVARCHAR(MAX);
 SELECT @cols =
     STUFF((
         SELECT
-            ', SUM(CASE WHEN d.PeriodKey='''+PeriodKey+''' THEN d.BalanceMtr ELSE 0 END) AS ['+PeriodKey+'_mtr]'
+            ', SUM(CASE WHEN d.PeriodKey='''+PeriodKey+''' THEN d.JobTotalMtr ELSE 0 END) AS ['+PeriodKey+'_mtr]'
         FROM (SELECT DISTINCT PeriodKey,SortKey FROM #week_dim_jobs) x
         ORDER BY x.SortKey
         FOR XML PATH(''),TYPE
@@ -303,14 +290,11 @@ if ($stmtCap === false) {
 $capacityMap = []; 
 while ($rowCap = sqlsrv_fetch_array($stmtCap, SQLSRV_FETCH_ASSOC)) {
     $raw = trim((string)$rowCap['StrDia']);
-    $f = is_numeric($raw) ? (float)$raw : 0.0;
+    // $f = is_numeric($raw) ? (float)$raw : 0.0;
 
-    $k4 = number_format($f, 4, '.', '');            // e.g. "0.3000"
-    $kTrim = rtrim(rtrim($k4, '0'), '.');           // e.g. "0.3"
-
+    // $k4 = number_format($f, 4, '.', '');            // e.g. "0.3000"
+    // $kTrim = rtrim(rtrim($k4, '0'), '.');           // e.g. "0.3"
     $capacityMap[$raw] = $rowCap;
-    $capacityMap[$k4] = $rowCap;
-    $capacityMap[$kTrim] = $rowCap;
 }
 sqlsrv_free_stmt($stmtCap);
 
@@ -335,10 +319,7 @@ while ($row = sqlsrv_fetch_array($finalStmt, SQLSRV_FETCH_ASSOC)) {
     $strDiaKey = number_format($strDiaF, 4, '.', '');
     $strDiaKeyTrim = rtrim(rtrim($strDiaKey, '0'), '.');
 
-    $capRow = $capacityMap[$strDiaKey]
-        ?? $capacityMap[$strDiaKeyTrim]
-        ?? $capacityMap[trim((string)$strDiaRaw)]
-        ?? null;
+    $capRow = $capacityMap[trim((string)$strDiaRaw)] ?? null;
 
     $drawMtrHr  = $capRow ? (float)($capRow['DrawingMtrPerHr']  ?? 0) : 0.0;
     $bunchMtrHr = $capRow ? (float)($capRow['BunchingMtrPerHr'] ?? 0) : 0.0;
@@ -366,7 +347,7 @@ while ($row = sqlsrv_fetch_array($finalStmt, SQLSRV_FETCH_ASSOC)) {
 
             // ---------------- Drawing (weekly capacity includes NoOfStr) ----------------
             $drawingWeekCap = $drawMtrHr * $mcCount['drawing'] * $noOfShift * $perShiftHrs * $weekDays;
-            $drawingLoad = ($drawingWeekCap > 0) ? (($noOfStr * $qty )/ $drawingWeekCap) : 0;
+            $drawingLoad = ($drawingWeekCap > 0) ? (($noOfStr * $qty)/ $drawingWeekCap) : 0;
 
             // ---------------- Tinning (only if CondTypeTag == 'TIN') ----------------
             if ($condType !== 'TIN') {
@@ -408,6 +389,41 @@ while ($row = sqlsrv_fetch_array($finalStmt, SQLSRV_FETCH_ASSOC)) {
 
     $rows[] = $out;
 }
+
+// Add one blank editable row at the end for manual entry.
+// if (!empty($headers)) {
+//     $lastRow = [];
+
+//     foreach ($headers as $header) {
+//         if (preg_match('/_(Drawing|Tinning|Bunching|Mica)$/i', $header, $match)) {
+//             switch (strtolower($match[1])) {
+//                 case 'drawing':
+//                     $lastRow[] = 1;   // Drawing logic
+//                     break;
+
+//                 case 'tinning':
+//                     $lastRow[] = 2;   // Tinning logic
+//                     break;
+
+//                 case 'bunching':
+//                     $lastRow[] = 3;   // Bunching logic
+//                     break;
+
+//                 case 'mica':
+//                     $lastRow[] = 4;   // Mica logic
+//                     break;
+
+//                 default:
+//                     $lastRow[] = '';
+//                     break;
+//             }
+//         } else {
+//             $lastRow[] = '';
+//         }
+//     }
+
+//     $rows[] = $lastRow;
+// }
 
     sqlsrv_free_stmt($stmt);
     sqlsrv_close($con);

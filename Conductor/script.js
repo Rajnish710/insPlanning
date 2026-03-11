@@ -30,6 +30,13 @@ function generateDrawingPDF(mon, week, year, fromDate) {
     console.log('✓ Drawing PDF opened:', url);
 }
 
+// Generate Requirement Planning PDF (Drawing, Tinning, Bunching, Mica)
+function generateRequirementPDF(mon, week, year, fromDate) {
+    const url = `requirementPDF.php?fromDate=${fromDate}&mon=${mon}&weekNo=${week}&yr=${year}`;
+    window.open(url, '_blank');
+    console.log('✓ Requirement PDF opened:', url);
+}
+
 // Fetch job-wise data via AJAX
 async function fetchJobWizeData(mon, week, year, fromDate) {
     try {
@@ -136,15 +143,19 @@ $('#sheet').on('click', function(e) {
             case 'Mtr':
                 fetchJobWizeData(month, week, year, fromDate);
                 break;
-            
+
+            case 'Kgs':
+                generateRequirementPDF(month, week, year, fromDate);
+                break;    
+
             case 'Drawing':
-                generateDrawingPDF(month, week, year, fromDate);
-                break;
+                // generateDrawingPDF(month, week, year, fromDate);
+                // break;
             
             case 'Tinning':
             case 'Bunching':
             case 'Mica':
-                console.log(`${metricType} logic - Period: M${month}W${week}${year}`);
+                console.log(month, week, year, fromDate);
                 break;
             
             default:

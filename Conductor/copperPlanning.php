@@ -385,6 +385,7 @@ function computeFooters(headers, rows) {
 
       const headers = json.headers;
       const rows = json.rows;
+      console.log('Data loaded:', headers);
 
       const columns = buildColumns(headers);
 
