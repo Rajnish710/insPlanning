@@ -37,6 +37,8 @@ try {
     $sql = "
 SET NOCOUNT ON;
 
+DECLARE @FromDate DATE = ?;
+
 IF OBJECT_ID('tempdb..#week_dim_jobs') IS NOT NULL
     DROP TABLE #week_dim_jobs;
 
@@ -58,10 +60,10 @@ WITH src AS
         CPMult = CAST(1 AS DECIMAL(18,4))
     FROM [PlanningSys].[control].[data] a
     WHERE a.isDelete = 0
-      AND a.insuStartDate >= ?
       AND LTRIM(RTRIM(a.JobNo)) <> ''
       AND LTRIM(RTRIM(a.NoOfStr)) NOT IN ('', '-', '- ', '0', '0.0')
       AND LTRIM(RTRIM(a.StrDia))  NOT IN ('', '-', '- ', '0', '0.0')
+      AND a.insuStartDate IS NOT NULL
 
     UNION ALL
 
@@ -86,14 +88,14 @@ WITH src AS
                  AS DECIMAL(18,4))
     FROM [PlanningSys].[instru].[data] a
     WHERE a.isDelete = 0
-      AND a.insuStartDate >= ?
       AND LTRIM(RTRIM(a.JobNo)) <> ''
       AND LTRIM(RTRIM(a.NoOfStr)) NOT IN ('', '-', '- ', '0', '0.0')
       AND LTRIM(RTRIM(a.StrDia))  NOT IN ('', '-', '- ', '0', '0.0')
+      AND a.insuStartDate IS NOT NULL
 ),
 
 /*========================================================
-  STEP 2: Safe Type Conversion (Single Pass)
+  STEP 2: Safe Type Conversion + First Week Mapping
 ========================================================*/
 base AS
 (
@@ -113,7 +115,10 @@ base AS
                 ELSE ''
             END,
         s.CPMult,
-        WeekShift = DATEADD(DAY,-7,s.insuStartDate)
+        WeekBaseDate = CASE
+                         WHEN s.insuStartDate < @FromDate THEN @FromDate
+                         ELSE s.insuStartDate
+                       END
     FROM src s
 ),
 
@@ -129,12 +134,13 @@ metrics AS
         Mtr = CAST(b.PlanCutLenNum * b.DrumsNum * b.CPMult AS DECIMAL(18,4)),
         b.isMica,
         b.CondTypeTag,
-        Yr  = YEAR(b.WeekShift),
-        Mon = MONTH(b.WeekShift),
+        Yr  = YEAR(DATEADD(DAY,-7,b.WeekBaseDate)),
+        Mon = MONTH(DATEADD(DAY,-7,b.WeekBaseDate)),
         WeekNo =
-            CASE WHEN DAY(b.WeekShift) <= 21
-                 THEN (DAY(b.WeekShift)-1)/7 + 1
-                 ELSE 4
+            CASE
+                WHEN DAY(DATEADD(DAY,-7,b.WeekBaseDate)) <= 21
+                    THEN (DAY(DATEADD(DAY,-7,b.WeekBaseDate))-1)/7 + 1
+                ELSE 4
             END
     FROM base b
     WHERE b.NoOfStrNum > 0
@@ -159,52 +165,133 @@ job_plan AS
         isMica,CondTypeTag,
         JobNo
 ),
+
 /*========================================================
-  STEP 7: Week-Level Aggregate
+  STEP 5: Week-Level Demand
 ========================================================*/
-week_balance AS
+week_demand AS
 (
     SELECT
         Yr,Mon,WeekNo,
         NoOfStrNum,StrDiaNum,
         isMica,CondTypeTag,
-        JobTotalMtr = SUM(JobTotalMtr)
+        WeekDemandMtr = SUM(JobTotalMtr)
     FROM job_plan
     WHERE JobTotalMtr > 0
     GROUP BY
         Yr,Mon,WeekNo,
         NoOfStrNum,StrDiaNum,
         isMica,CondTypeTag
+),
+
+/*========================================================
+  STEP 6: Final Production Aggregate
+========================================================*/
+prod AS
+(
+    SELECT
+        NoOfStrNum  = [noOfStrands],
+        StrDiaNum   = CAST([strDia] AS DECIMAL(10,4)),
+        CondTypeTag = CASE WHEN [condType] IS NULL THEN '' ELSE [condType] END,
+        isMica,
+        ProducedMtr = SUM(ISNULL([Length], 0))
+    FROM [PlanningSys].[prod].[Outward]
+    GROUP BY
+        [noOfStrands],
+        CAST([strDia] AS DECIMAL(10,4)),
+        CASE WHEN [condType] IS NULL THEN '' ELSE [condType] END,
+        isMica
+),
+
+/*========================================================
+  STEP 7: Attach Production + Running Demand
+========================================================*/
+week_calc AS
+(
+    SELECT
+        d.Yr,
+        d.Mon,
+        d.WeekNo,
+        d.NoOfStrNum,
+        d.StrDiaNum,
+        d.isMica,
+        d.CondTypeTag,
+        d.WeekDemandMtr,
+        ProducedMtr = ISNULL(p.ProducedMtr,0),
+
+        CumDemand =
+            SUM(d.WeekDemandMtr) OVER
+            (
+                PARTITION BY d.NoOfStrNum,d.StrDiaNum,d.isMica,d.CondTypeTag
+                ORDER BY d.Yr,d.Mon,d.WeekNo
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            )
+    FROM week_demand d
+    LEFT JOIN prod p
+        ON  p.NoOfStrNum   = d.NoOfStrNum
+        AND p.StrDiaNum    = d.StrDiaNum
+        AND p.isMica       = d.isMica
+        AND p.CondTypeTag  = d.CondTypeTag
+),
+
+/*========================================================
+  STEP 8: Deduct Production FIFO from Earliest Weeks
+========================================================*/
+week_balance AS
+(
+    SELECT
+        Yr,
+        Mon,
+        WeekNo,
+        NoOfStrNum,
+        StrDiaNum,
+        isMica,
+        CondTypeTag,
+        BalanceMtr =
+            CAST(
+                CASE
+                    WHEN ProducedMtr >= CumDemand THEN 0
+                    WHEN ProducedMtr <= (CumDemand - WeekDemandMtr) THEN WeekDemandMtr
+                    ELSE CumDemand - ProducedMtr
+                END
+            AS DECIMAL(18,4))
+    FROM week_calc
 )
 
 /*========================================================
-  STEP 8: Store for Dynamic Pivot
+  STEP 9: Store for Dynamic Pivot
 ========================================================*/
 SELECT
-    Yr,Mon,WeekNo,
+    Yr,
+    Mon,
+    WeekNo,
     PeriodKey =
         LEFT(DATENAME(MONTH,DATEFROMPARTS(Yr,Mon,1)),3)
         + '-' + RIGHT(CONVERT(VARCHAR(4),Yr),2)
         + '_W' + CAST(WeekNo AS VARCHAR(2)),
     SortKey = (Yr*100+Mon)*10+WeekNo,
-    NoOfStrNum,StrDiaNum,isMica,CondTypeTag,
-    JobTotalMtr
+    NoOfStrNum,
+    StrDiaNum,
+    isMica,
+    CondTypeTag,
+    BalanceMtr
 INTO #week_dim_jobs
-FROM week_balance;
+FROM week_balance
+WHERE BalanceMtr > 0;
 
 CREATE INDEX IX_temp
 ON #week_dim_jobs(NoOfStrNum,StrDiaNum,isMica,CondTypeTag,SortKey)
-INCLUDE (JobTotalMtr,PeriodKey);
+INCLUDE (BalanceMtr,PeriodKey);
 
 /*========================================================
-  STEP 9: Dynamic Horizontal Pivot (Balance Only)
+  STEP 10: Dynamic Horizontal Pivot
 ========================================================*/
 DECLARE @cols NVARCHAR(MAX), @sql NVARCHAR(MAX);
 
 SELECT @cols =
     STUFF((
         SELECT
-            ', SUM(CASE WHEN d.PeriodKey='''+PeriodKey+''' THEN d.JobTotalMtr ELSE 0 END) AS ['+PeriodKey+'_mtr]'
+            ', SUM(CASE WHEN d.PeriodKey='''+PeriodKey+''' THEN d.BalanceMtr ELSE 0 END) AS ['+PeriodKey+'_mtr]'
         FROM (SELECT DISTINCT PeriodKey,SortKey FROM #week_dim_jobs) x
         ORDER BY x.SortKey
         FOR XML PATH(''),TYPE
@@ -225,7 +312,7 @@ EXEC sp_executesql @sql;
 ";
 
     // Run batch. There will be multiple result sets; final is the pivot output.
-    $params = [$fromDate, $fromDate];
+    $params = [$fromDate];
     $stmt = sqlsrv_query($con, $sql, $params, ["Scrollable" => SQLSRV_CURSOR_FORWARD]);
     if ($stmt === false) {
         throw new Exception("SQL failed: " . print_r(sqlsrv_errors(), true));
