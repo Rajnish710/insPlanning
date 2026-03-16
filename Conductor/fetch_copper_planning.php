@@ -167,77 +167,79 @@ job_plan AS
 ),
 
 /*========================================================
-  STEP 5: Week-Level Demand
+  STEP 5: Relevant Job List For Production Fetch
 ========================================================*/
-week_demand AS
+src_jobs AS
 (
-    SELECT
-        Yr,Mon,WeekNo,
-        NoOfStrNum,StrDiaNum,
-        isMica,CondTypeTag,
-        WeekDemandMtr = SUM(JobTotalMtr)
+    SELECT DISTINCT JobNo
     FROM job_plan
-    WHERE JobTotalMtr > 0
-    GROUP BY
-        Yr,Mon,WeekNo,
-        NoOfStrNum,StrDiaNum,
-        isMica,CondTypeTag
 ),
 
 /*========================================================
-  STEP 6: Final Production Aggregate
+  STEP 6: Final Production Aggregate From Ins
 ========================================================*/
-prod AS
+job_prod AS
 (
     SELECT
-        NoOfStrNum  = [noOfStrands],
-        StrDiaNum   = CAST([strDia] AS DECIMAL(10,4)),
-        CondTypeTag = CASE WHEN [condType] IS NULL THEN '' ELSE [condType] END,
-        isMica,
-        ProducedMtr = SUM(ISNULL([Length], 0))
-    FROM [PlanningSys].[prod].[Outward]
-    GROUP BY
-        [noOfStrands],
-        CAST([strDia] AS DECIMAL(10,4)),
-        CASE WHEN [condType] IS NULL THEN '' ELSE [condType] END,
-        isMica
+        p.EffectiveJobNo,
+        TotalPQty = SUM(p.PQty)
+    FROM
+    (
+        SELECT
+            EffectiveJobNo = LTRIM(RTRIM(I.JOBNo)),
+            PQty = ISNULL(I.PQty, 0)
+        FROM TRADEZ.dbo.Ins AS I
+        INNER JOIN src_jobs sj
+            ON sj.JobNo = LTRIM(RTRIM(I.JOBNo))
+        WHERE I.JobTransfer IS NULL
+           OR LTRIM(RTRIM(I.JobTransfer)) = ''
+
+        UNION ALL
+
+        SELECT
+            EffectiveJobNo = LTRIM(RTRIM(I.JobTransfer)),
+            PQty = ISNULL(I.PQty, 0)
+        FROM TRADEZ.dbo.Ins AS I
+        INNER JOIN src_jobs sj
+            ON sj.JobNo = LTRIM(RTRIM(I.JobTransfer))
+        WHERE I.JobTransfer IS NOT NULL
+          AND LTRIM(RTRIM(I.JobTransfer)) <> ''
+    ) p
+    GROUP BY p.EffectiveJobNo
 ),
 
 /*========================================================
-  STEP 7: Attach Production + Running Demand
+  STEP 7: Debit Production Against Each Job FIFO By Week
 ========================================================*/
-week_calc AS
+job_week_calc AS
 (
     SELECT
-        d.Yr,
-        d.Mon,
-        d.WeekNo,
-        d.NoOfStrNum,
-        d.StrDiaNum,
-        d.isMica,
-        d.CondTypeTag,
-        d.WeekDemandMtr,
-        ProducedMtr = ISNULL(p.ProducedMtr,0),
-
-        CumDemand =
-            SUM(d.WeekDemandMtr) OVER
+        jp.Yr,
+        jp.Mon,
+        jp.WeekNo,
+        jp.NoOfStrNum,
+        jp.StrDiaNum,
+        jp.isMica,
+        jp.CondTypeTag,
+        jp.JobNo,
+        jp.JobTotalMtr,
+        ProducedMtr = ISNULL(jp2.TotalPQty, 0),
+        CumJobDemand =
+            SUM(jp.JobTotalMtr) OVER
             (
-                PARTITION BY d.NoOfStrNum,d.StrDiaNum,d.isMica,d.CondTypeTag
-                ORDER BY d.Yr,d.Mon,d.WeekNo
+                PARTITION BY jp.JobNo
+                ORDER BY jp.Yr,jp.Mon,jp.WeekNo,jp.StrDiaNum,jp.NoOfStrNum,jp.isMica,jp.CondTypeTag
                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
             )
-    FROM week_demand d
-    LEFT JOIN prod p
-        ON  p.NoOfStrNum   = d.NoOfStrNum
-        AND p.StrDiaNum    = d.StrDiaNum
-        AND p.isMica       = d.isMica
-        AND p.CondTypeTag  = d.CondTypeTag
+    FROM job_plan jp
+    LEFT JOIN job_prod jp2
+        ON jp2.EffectiveJobNo = jp.JobNo
 ),
 
 /*========================================================
-  STEP 8: Deduct Production FIFO from Earliest Weeks
+  STEP 8: Remaining Job Balance After Production Debit
 ========================================================*/
-week_balance AS
+job_week_balance AS
 (
     SELECT
         Yr,
@@ -247,19 +249,38 @@ week_balance AS
         StrDiaNum,
         isMica,
         CondTypeTag,
+        JobNo,
         BalanceMtr =
             CAST(
                 CASE
-                    WHEN ProducedMtr >= CumDemand THEN 0
-                    WHEN ProducedMtr <= (CumDemand - WeekDemandMtr) THEN WeekDemandMtr
-                    ELSE CumDemand - ProducedMtr
+                    WHEN ProducedMtr >= CumJobDemand THEN 0
+                    WHEN ProducedMtr <= (CumJobDemand - JobTotalMtr) THEN JobTotalMtr
+                    ELSE CumJobDemand - ProducedMtr
                 END
             AS DECIMAL(18,4))
-    FROM week_calc
+    FROM job_week_calc
+),
+
+/*========================================================
+  STEP 9: Week-Level Demand After Job Debit
+========================================================*/
+week_demand AS
+(
+    SELECT
+        Yr,Mon,WeekNo,
+        NoOfStrNum,StrDiaNum,
+        isMica,CondTypeTag,
+        WeekDemandMtr = SUM(BalanceMtr)
+    FROM job_week_balance
+    WHERE BalanceMtr > 0
+    GROUP BY
+        Yr,Mon,WeekNo,
+        NoOfStrNum,StrDiaNum,
+        isMica,CondTypeTag
 )
 
 /*========================================================
-  STEP 9: Store for Dynamic Pivot
+  STEP 10: Store for Dynamic Pivot
 ========================================================*/
 SELECT
     Yr,
@@ -274,17 +295,17 @@ SELECT
     StrDiaNum,
     isMica,
     CondTypeTag,
-    BalanceMtr
+    BalanceMtr = WeekDemandMtr
 INTO #week_dim_jobs
-FROM week_balance
-WHERE BalanceMtr > 0;
+FROM week_demand
+WHERE WeekDemandMtr > 0;
 
 CREATE INDEX IX_temp
 ON #week_dim_jobs(NoOfStrNum,StrDiaNum,isMica,CondTypeTag,SortKey)
 INCLUDE (BalanceMtr,PeriodKey);
 
 /*========================================================
-  STEP 10: Dynamic Horizontal Pivot
+    STEP 11: Dynamic Horizontal Pivot
 ========================================================*/
 DECLARE @cols NVARCHAR(MAX), @sql NVARCHAR(MAX);
 
