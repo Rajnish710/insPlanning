@@ -67,13 +67,14 @@
                         <span class="nav_name">Conductor <i class='bx bxs-chevron-down' style="font-size: 1rem;"></i></span>
                     </a>
                     <div class="drop2 mb-2 ms-3">
-                        <a class="nav_link mb-0" href="../Conductor/copperPlanning.php" id="copperPlan"><span class="nav_name">1. &nbsp;&nbsp;Copper Plan</span></a>
+                        <a class="nav_link mb-0" href="../Conductor/copperPendingJobs.php" id="copperPendingJobsPage"><span class="nav_name">0. &nbsp;&nbsp;Pending Jobs</span></a>
+                        <a class="nav_link mb-0" href="../Conductor/copperPlanning.php" id="copperPlanningPage"><span class="nav_name">1. &nbsp;&nbsp;Copper Plan</span></a>
                     </div>
 
 
                     <a class="sub-btn2 nav_link">
                         <i class='bx bx-book-content nav_icon'></i>
-                        <span class="nav_name">Instrumentetion <i class='bx bxs-chevron-down' style="font-size: 1rem;"></i></span>
+                        <span class="nav_name">Instrumentation <i class='bx bxs-chevron-down' style="font-size: 1rem;"></i></span>
                     </a>
                     <div class="drop2 mb-2 ms-3">
                         <a class="nav_link mb-0" href="../Instrumentation/instru_finalPlan.php" id="instruFinalePlanPage"><span class="nav_name">1. &nbsp;&nbsp;Final Plan</span></a>

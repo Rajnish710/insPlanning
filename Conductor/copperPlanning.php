@@ -249,7 +249,7 @@ include '../includes/dbcon45.php';
 <div id="toolbar">
   <div class="toolbar-left">
     <label for="fromDate">From Date</label>
-    <input type="date" id="fromDate" value="2026-03-15" />
+    <input type="date" id="fromDate" value="<?php echo date('Y-m-d'); ?>" />
     <button onclick="loadReport()">Load</button>
   </div>
   <div class="toolbar-right">
@@ -291,6 +291,7 @@ let lastLoadedRows = [];
 function makePrettyTitle(h) {
   if (h === 'isMica') return 'Is Mica';
   if (h === 'CondTypeTag') return 'Cond Type';
+  if (h === 'Total_Kgs') return 'Total\nKgs';
   if (h === 'NoOfStr') return 'No of Str';
   if (h === 'StrDia') return 'Str Dia';
 
@@ -334,31 +335,73 @@ function buildColumns(headers) {
   });
 }
 
-function computeFooters(headers, rows) {
-  const footerRow = new Array(headers.length).fill('');
+function appendTotalKgsColumn(headers, rows) {
+  const condIdx = headers.indexOf('CondTypeTag');
+  if (condIdx === -1) return { headers, rows };
 
-  if (headers.length > 0) footerRow[0] = 'Total %';
+  const insertAt = condIdx + 1;
+  const kgsIndexes = [];
+
+  for (let i = 0; i < headers.length; i++) {
+    if (/_Kgs$/i.test(headers[i])) kgsIndexes.push(i);
+  }
+
+  const newHeaders = headers.slice();
+  newHeaders.splice(insertAt, 0, 'Total_Kgs');
+
+  const newRows = rows.map((r) => {
+    let total = 0;
+
+    for (let i = 0; i < kgsIndexes.length; i++) {
+      const v = r[kgsIndexes[i]];
+      const num = (v === null || v === undefined || v === '')
+        ? 0
+        : parseFloat(String(v).replace(/,/g, ''));
+      if (!Number.isNaN(num)) total += num;
+    }
+
+    const nr = r.slice();
+    nr.splice(insertAt, 0, total);
+    return nr;
+  });
+
+  return { headers: newHeaders, rows: newRows };
+}
+
+function computeFooters(headers, rows) {
+  const footer = new Array(headers.length).fill('');
+
+  if (headers.length > 0) {
+    footer[0] = 'Total';
+  }
+
+  const parseNumber = (value) => {
+    if (value === null || value === undefined || value === '') return 0;
+
+    const num = parseFloat(String(value).replace(/,/g, ''));
+    return Number.isNaN(num) ? 0 : num;
+  };
+
+  const sumColumn = (colIndex) => {
+    let sum = 0;
+    for (const row of rows) {
+      sum += parseNumber(row[colIndex]);
+    }
+    return sum;
+  };
 
   for (let c = 0; c < headers.length; c++) {
-    const h = headers[c];
+    const header = headers[c];
+    const sum = sumColumn(c);
 
-    if (/_(Drawing|Tinning|Bunching|Mica)$/i.test(h)) {
-      let sum = 0;
-
-      for (let r = 0; r < rows.length; r++) {
-        const v = rows[r][c];
-        const num = (v === null || v === undefined || v === '')
-          ? 0
-          : parseFloat(String(v).replace(/,/g, ''));
-
-        if (!Number.isNaN(num)) sum += num;
-      }
-
-      footerRow[c] = (sum * 100).toFixed(1) + '%';
+    if (/_Kgs$/i.test(header)) {
+      footer[c] = Math.round(sum).toLocaleString('en-IN');
+    } else if (/_(Drawing|Tinning|Bunching|Mica)$/i.test(header)) {
+      footer[c] = `${(sum * 100).toFixed(1)}%`;
     }
   }
 
-  return [footerRow];
+  return [footer];
 }
 
 async function loadReport() {
@@ -375,8 +418,9 @@ async function loadReport() {
 
     if (!json.ok) throw new Error(json.error || 'Unknown error');
 
-    const headers = json.headers;
-    const rows = json.rows;
+    const transformed = appendTotalKgsColumn(json.headers, json.rows);
+    const headers = transformed.headers;
+    const rows = transformed.rows;
     
     lastLoadedHeaders = headers;
     lastLoadedRows = rows;
